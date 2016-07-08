@@ -8,7 +8,7 @@ class Domain():
 		self.dom_id = ""
 		self.dom_name = ""
 		self.coords = ()
-		self.pre_post_coords = ()
+		self.pre_post_coord = ()
 
 	def is_within(self, mut_pos):
 		"""
@@ -40,11 +40,7 @@ class Domain():
 			return True
 		else:
 			return False
-
-	def natural_variants_enrichment(self):
-		"""
-		"""
-		pass
+		
 
 class Mutation():
 	"""
@@ -58,6 +54,17 @@ class Mutation():
 		self.diseases= {}
 		self.pubmed_ids = []
 
+	def is_natural_variant(self, variants):
+		"""
+		Check if the mutation is in natural variants set.
+		"""
+
+		positions = [variant.protein_loc for variant in variants]
+
+		if self.pos in positions:
+			return True
+		else: 
+			return False
 
 class Natural_variant():
 	"""
@@ -67,26 +74,24 @@ class Natural_variant():
 		self.protein_loc = 0
 		self.aa_code = "" # source aa
 		self.aa_mut = "" # mutated
-		self.annotation = "" # missennse, 
+		self.annotation = "" # missennse
 		self.flags = "" # is it LoF
 		self.allele_count = 0
 		self.allele_frequency = 0.0
 		self.homo_number = 0
 
-	def is_disease_assoc(self, mut_pos, mut_aa):
+	def is_disease_assoc(self, mutations, mut_aa):
 		"""
 		Is the variant in the uniprot disease associated list?
 		To make sure, check the aa code of the mutated aa.
 		"""
 
-		assert(mut_aa==aa_code)
+		positions = [mutation.pos for mutation in mutations]
 
-		if mut_pos == self.protein_loc:
+		if self.protein_loc in positions:
 			return True
 		else:
 			return False
-
-		
 
 class Alignment():
 	"""
@@ -124,7 +129,7 @@ class Protein():
 
 	def read_mutations(self):
 		"""
-		Create mutations objects
+		Create mutations objects.
 		"""
 		mut_file = open(self.mut_file, "r").read().splitlines()
 
@@ -236,7 +241,7 @@ class Protein():
 				aa_exch = line[6].split(".")[1]
 				parts = re.findall("([A-Za-z]{3})([0-9]+)([A-Za-z]{3}|\?)",aa_exch)
 				if parts:
-					variant.protein_loc = parts[0][1]
+					variant.protein_loc = float(parts[0][1])
 					variant.aa_code = parts[0][0]
 					variant.aa_mut = parts[0][2]		
 				else:pass
@@ -286,11 +291,30 @@ class Protein():
 				self.alignments.append(alignment)
 
 
-	def get_natural_variant_stats(self):#, region_start=0, region_end=self.seq_len):
+	def get_variants_from_region(self, region_start=0, region_end=0):
+		"""
+		Get the subset of variants that are inside or in the proximity to the domain.
+		"""
+		if not region_end:  # if the end is not given, then take the whole sequence
+			region_end = self.seq_len
+
+		reg_variants = []
+		
+		for variant in self.variants:
+			if variant.protein_loc >= region_start and variant.protein_loc <= region_end:
+				reg_variants.append(variant)
+
+		return reg_variants
+
+	def get_natural_variant_stats(self, region_start=0, region_end=0):
 		"""
 		Calculates basic stats for the variants list.
 		"""
-		n_variants = float(len(self.variants))
+
+		if not region_end:  # if the end is not given, then take the whole sequence
+			region_end = self.seq_len
+
+		n_all_variants = float(len(self.variants)) #number of variants across entire protein
 		n_missense = 0
 		n_synonymous = 0
 		n_stops = 0
@@ -298,31 +322,52 @@ class Protein():
 		n_utr = 0
 		n_frameshift = 0
 		n_deletions = 0
+		n_variants = 0
 
-		number_of_variants_per_seq_len = n_variants/self.seq_len
+		region_length = region_end-region_start
+
+		number_of_variants_per_seq_len = n_variants/region_length
 
 		for variant in self.variants:
-			if variant.annotation == "5' UTR":
-				n_utr+=1
-			elif variant.annotation == "synonymous":
-				n_synonymous+=1
-			elif variant.annotation == "missense":
-				n_missense+=1
-			elif variant.annotation == "stop gained":
-				n_stops+=1
-			elif variant.annotation == "frameshift":
-				n_frameshift+=1
-			elif variant.annotation == "inframe deletion":
-				n_deletions+=1
-			elif variant.annotation == "intron":
-				n_introns+=1
+			if variant.protein_loc>=region_start and variant.protein_loc<=region_end:
+				n_variants+=1
+				if variant.annotation == "5' UTR":
+					n_utr+=1
+				elif variant.annotation == "synonymous":
+					n_synonymous+=1
+				elif variant.annotation == "missense":
+					n_missense+=1
+				elif variant.annotation == "stop gained":
+					n_stops+=1
+				elif variant.annotation == "frameshift":
+					n_frameshift+=1
+				elif variant.annotation == "inframe deletion":
+					n_deletions+=1
+				elif variant.annotation == "intron":
+					n_introns+=1
 
-		stats_list = {"n_variants":n_variants, "n_missense":n_missense, "n_synonymous":n_synonymous, "n_stop":n_stops,
-						"n_frameshift":n_frameshift, "n_introns":n_introns, "n_utr": n_utr, "n_deletions": n_deletions, 
-						"num_per_len": number_of_variants_per_seq_len}
+		stats_list = {"n_all_variants":n_all_variants, "n_variants_in_region":n_variants, "n_missense":n_missense, 
+						"n_synonymous":n_synonymous, "n_stop":n_stops, "n_frameshift":n_frameshift, "n_introns":n_introns,
+						 "n_utr": n_utr, "n_deletions": n_deletions,  "num_per_len": number_of_variants_per_seq_len}
+
 
 		return stats_list
 
+
+	def natural_variants_enrichment(self):
+		"""
+		Calculate the natural variants enrichment inside the annotated domains.
+		Basically, just run get_natural_variant_stats() on domain coordinates.
+		Filter by those with low Allele Frequency that indicates they are rare.
+		Proposes the new disease causing mutations.
+		"""
+
+		for domain in self.domains:
+			dom_variants = self.get_variants_from_region(domain.pre_post_coords[0], domain.pre_post_coords[1])
+			dom_stats = self.get_natural_variant_stats(domain.pre_post_coords[0], domain.pre_post_coords[1])
+			
+
+		
 if __name__ == '__main__':
 	mutfile = "umutations.dat"
 	domfile = "domains_Q9NQV7.dat"
@@ -335,6 +380,4 @@ if __name__ == '__main__':
 	protein.read_natural_variants()
 	protein.read_alignments()
 	#protein.locate_mutations()
-	stats = protein.get_natural_variant_stats()
-	print stats
-
+	stats = protein.get_natural_variant_stats(1,30)
