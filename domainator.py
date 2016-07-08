@@ -41,9 +41,14 @@ class Domain():
 		else:
 			return False
 
+	def natural_variants_enrichment(self):
+		"""
+		"""
+		pass
+
 class Mutation():
 	"""
-	Represents a single mutation
+	Represents a single mutation.
 	"""
 	def __init__(self):
 		self.aa_code = ""
@@ -68,21 +73,53 @@ class Natural_variant():
 		self.allele_frequency = 0.0
 		self.homo_number = 0
 
+	def is_disease_assoc(self, mut_pos, mut_aa):
+		"""
+		Is the variant in the uniprot disease associated list?
+		To make sure, check the aa code of the mutated aa.
+		"""
+
+		assert(mut_aa==aa_code)
+
+		if mut_pos == self.protein_loc:
+			return True
+		else:
+			return False
+
+		
+
+class Alignment():
+	"""
+	Represents a single alignment of target (our) sequence with template.
+	"""
+	def __init__(self):
+		self.pdf_code = ""
+		self.chain = ""
+		self.identity = 0.0
+		self.evalue = 0.0
+		self.pdb_start = 0
+		self.pdb_end = 0
+		self.ali_start = 0 #first aligned residue in source seq
+		self.ali_end = 0
+		self.ref_seq = ""
+		self.pdb_seq = ""
 	
 class Protein():
 	"""
 	Czyta pliki z mutacja i domenami i buduje listy obiektow z domenami i mutacjami.
 	"""
-	def __init__(self, domains_file, mut_file, variants_file):
+	def __init__(self, domains_file, mut_file, variants_file, ali_file):
 		self.domains_file = domains_file
 		self.mut_file = mut_file
 		self.variants_file = variants_file
+		self.ali_file = ali_file
 		self.uniprot_id = ""
 		self.seq_name = ""
 		self.domains = []
 		self.sequence = ""
 		self.mutations = []
 		self.variants = []
+		self.alignments = []
 		self.seq_len = 0
 
 	def read_mutations(self):
@@ -117,6 +154,7 @@ class Protein():
 				continue
 			elif line.startswith("DISEASE_NAME"):
 				mutation.diseases[id] = " ".join(line.split()[1:])
+				continue
 			elif line.startswith("NREFS"):
 				self.mutations.append(mutation)
 
@@ -158,7 +196,7 @@ class Protein():
 				continue
 			elif line.startswith("SEQUENCE"):
 				self.sequence = line.split()[1]
-				self.seq_len = len(self.sequence)
+				self.seq_len = float(len(self.sequence))
 				continue
 			elif line.startswith("DOMAIN_ID"):
 				new_domain = True
@@ -205,22 +243,98 @@ class Protein():
 
 			variant.annotation = line[9] # missennse etc
 			variant.flags = line[10] # is it LoF
-			print variant.flags
 			variant.allele_count = float(line[11])
 			variant.allele_frequency = float(line[14])
 			variant.homo_number = float(line[13])
 
 			self.variants.append(variant)		
 
+	def read_alignments(self):
+		"""
+		Creates list of alignment objects.
+		"""
+		alifile = open(self.ali_file, "r").read().splitlines()
+
+		for line in alifile:
+			if line.startswith("ALIGN_PDB_CODE"):
+				alignment = Alignment()
+				alignment.pdf_code = line.split()[1]
+				continue
+			elif line.startswith("ALIGN_CHAIN"):
+				alignment.chain = line.split()[1]
+				continue
+			elif line.startswith("ALIGN_E_VALUE"):
+				alignment.evalue  = float(line.split()[1])
+				continue
+			elif line.startswith("ALIGN_OVERLAP_FROM"):
+				alignment.pdb_start = float(line.split()[1])
+				continue
+			elif line.startswith("ALIGN_OVERLAP_TO"):
+				alignment.pdb_end = float(line.split()[1])
+				continue
+			elif line.startswith("UNIPROT_SEQ"):
+				alignment.ref_seq = line.split()[1]
+				continue
+			elif line.startswith("PDB_SEQ"):
+				alignment.pdb_seq = line.split()[1]
+				continue
+			elif line.startswith("ALIGN_START_RES"):
+				alignment.ali_start = float(line.split()[1])
+				continue
+			elif line.startswith("ALIGN_END_RES"):
+				alignment.ali_end = float(line.split()[1])
+				self.alignments.append(alignment)
+
+
+	def get_natural_variant_stats(self):#, region_start=0, region_end=self.seq_len):
+		"""
+		Calculates basic stats for the variants list.
+		"""
+		n_variants = float(len(self.variants))
+		n_missense = 0
+		n_synonymous = 0
+		n_stops = 0
+		n_introns = 0
+		n_utr = 0
+		n_frameshift = 0
+		n_deletions = 0
+
+		number_of_variants_per_seq_len = n_variants/self.seq_len
+
+		for variant in self.variants:
+			if variant.annotation == "5' UTR":
+				n_utr+=1
+			elif variant.annotation == "synonymous":
+				n_synonymous+=1
+			elif variant.annotation == "missense":
+				n_missense+=1
+			elif variant.annotation == "stop gained":
+				n_stops+=1
+			elif variant.annotation == "frameshift":
+				n_frameshift+=1
+			elif variant.annotation == "inframe deletion":
+				n_deletions+=1
+			elif variant.annotation == "intron":
+				n_introns+=1
+
+		stats_list = {"n_variants":n_variants, "n_missense":n_missense, "n_synonymous":n_synonymous, "n_stop":n_stops,
+						"n_frameshift":n_frameshift, "n_introns":n_introns, "n_utr": n_utr, "n_deletions": n_deletions, 
+						"num_per_len": number_of_variants_per_seq_len}
+
+		return stats_list
 
 if __name__ == '__main__':
 	mutfile = "umutations.dat"
 	domfile = "domains_Q9NQV7.dat"
 	variantfile = "exac_ENSG00000164256.csv"
+	alifile = "alignments.dat"
 
-	protein = Protein(domfile, mutfile, variantfile)
+	protein = Protein(domfile, mutfile, variantfile, alifile)
 	protein.read_mutations()
 	protein.read_domains()
 	protein.read_natural_variants()
+	protein.read_alignments()
 	#protein.locate_mutations()
+	stats = protein.get_natural_variant_stats()
+	print stats
 
