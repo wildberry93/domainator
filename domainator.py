@@ -1,4 +1,4 @@
-import csv, re
+import csv, re, glob
 
 class Domain():
 	"""
@@ -19,12 +19,12 @@ class Domain():
 		after = False
 		if (mut_pos < self.coords[0] and mut_pos >= self.pre_post_coords[0]):
 		 	before = True
-		 	print "Mutation is located just BEFORE the domain ", self.dom_name
+		 	print "Mutation is located just BEFORE the domain ", self.dom_id
 		
 		# Check if AFTER the domain		
 		elif (mut_pos > self.coords[1] and mut_pos <= self.pre_post_coords[1]):
 			after = True
-			print "Mutation is located just AFTER the domain ", self.dom_name
+			print "Mutation is located just AFTER the domain ", self.dom_id
 
 		if before or after:
 			return True
@@ -36,7 +36,7 @@ class Domain():
 		Return True if the mutation is inside a given domain.
 		"""
 		if mut_pos >= self.coords[0] and mut_pos <= self.coords[1]:
-			print "Mutation is INSIDE the domain ", self.dom_name
+			print "Mutation is INSIDE the domain ", self.dom_id
 			return True
 		else:
 			return False
@@ -80,7 +80,7 @@ class Natural_variant():
 		self.allele_frequency = 0.0
 		self.homo_number = 0
 
-	def is_disease_assoc(self, mutations, mut_aa):
+	def is_disease_assoc(self, mutations):
 		"""
 		Is the variant in the uniprot disease associated list?
 		To make sure, check the aa code of the mutated aa.
@@ -111,7 +111,7 @@ class Alignment():
 	
 class Protein():
 	"""
-	Czyta pliki z mutacja i domenami i buduje listy obiektow z domenami i mutacjami.
+	Does all the work.
 	"""
 	def __init__(self, domains_file, mut_file, variants_file, ali_file):
 		self.domains_file = domains_file
@@ -172,17 +172,32 @@ class Protein():
 
 		in_domain = 0
 		in_prox = 0
+		outside = 0
+
+		domains_file = open("mutations2domains_"+self.uniprot_id+".txt", "w")
 
 		for mutation in self.mutations:
 			for domain in self.domains:
 				if domain.is_within(mutation.pos):
 					in_prox+=1
+
+					domains_file.write(domain.dom_id+"\t"+str(mutation.pos)+"\t"+
+						mutation.aa_code+"\t"+mutation.aa_mut+"\t"+",".join(mutation.diseases.values())+"\n")
 					break
 				elif domain.is_inside(mutation.pos):
 					in_domain+=1
+
+					domains_file.write(domain.dom_id+"\t"+str(mutation.pos)+"\t"+
+						mutation.aa_code+"\t"+mutation.aa_mut+"\t"+",".join(mutation.diseases.values())+"\n")
 					break
-				else: continue
+				else:
+					outside+=1 
+					continue
 			else: break
+
+		domains_file.close()
+
+		return (in_domain, in_prox, outside)
 
 
 	def read_domains(self):
@@ -353,6 +368,15 @@ class Protein():
 
 		return stats_list
 
+	def get_af_distribution():
+		"""
+		Return the allele frequency threshold all alleles below this level are assumed important
+		and later on draw a plot (later - I hate plotting in Python)
+		"""
+		frequencies = [variant.allele_frequency for variant in self.variants]
+		mean_freq = mean(frequencies)
+
+		return mean_freq
 
 	def natural_variants_enrichment(self):
 		"""
@@ -360,24 +384,61 @@ class Protein():
 		Basically, just run get_natural_variant_stats() on domain coordinates.
 		Filter by those with low Allele Frequency that indicates they are rare.
 		Proposes the new disease causing mutations.
+
+		Which allele frequency is considered low?
+		http://www.ncbi.nlm.nih.gov/pmc/articles/PMC3207674/
 		"""
 
-		for domain in self.domains:
-			dom_variants = self.get_variants_from_region(domain.pre_post_coords[0], domain.pre_post_coords[1])
-			dom_stats = self.get_natural_variant_stats(domain.pre_post_coords[0], domain.pre_post_coords[1])
-			
+		af_threshold = 10e-6 #self.get_af_distribution()
 
-		
+		for domain in self.domains:
+			interesting_variants = []
+			dom_variants = self.get_variants_from_region(domain.pre_post_coords[0], domain.pre_post_coords[1])
+			dom_stats = self.get_natural_variant_stats(domain.pre_post_coords[0], domain.pre_post_coords[1])			
+
+			print self.mutations
+			for variant in dom_variants:
+				if variant.allele_frequency <= af_threshold:
+					if not variant.is_disease_assoc(self.mutations):
+						#if variant.annotation is not "" #neutral, intron, etc.
+						interesting_variants.append(variant)
+					else:
+						print "WARNING! Low frequency variant but already in UniProt mutations!"
+			print interesting_variants
+	
+
+def do_single(dir):
+	"""
+	Perform whole procedure over a single protein entry. The input directory should contain mutations and domains files.
+	The alignment file is not required but recommended since it's necessary for full analysis.
+	"""
+	infiles = glob.glob(dir)
+
+	if "alignments.dat" not in infiles:
+		print "WATCH OUT! The alignment in unavaliable!"
+		alifile = None
+
+
+def do_all(up_dir):
+	"""
+	Perform for all given proteins.
+	"""
+	pass
+
 if __name__ == '__main__':
-	mutfile = "umutations.dat"
-	domfile = "domains_Q9NQV7.dat"
+	mutfile = "C:\Users\jagoda\Desktop\domainator\processed_entries\A0PJY2\umutations.dat"
+	domfile = "C:\Users\jagoda\Desktop\domainator\processed_entries\A0PJY2\domains_A0PJY2.dat"
 	variantfile = "exac_ENSG00000164256.csv"
-	alifile = "alignments.dat"
+	alifile = "C:\Users\jagoda\Desktop\domainator\processed_entries\A0PJY2\/alignments.dat"
 
 	protein = Protein(domfile, mutfile, variantfile, alifile)
 	protein.read_mutations()
+	
 	protein.read_domains()
-	protein.read_natural_variants()
-	protein.read_alignments()
-	#protein.locate_mutations()
-	stats = protein.get_natural_variant_stats(1,30)
+
+	#protein.read_natural_variants()
+	#protein.read_alignments()
+	protein.locate_mutations()
+
+	#stats = protein.get_natural_variant_stats(1,30)
+	#protein.natural_variants_enrichment()
